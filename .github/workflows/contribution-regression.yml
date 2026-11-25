@@ -1,0 +1,54 @@
+name: Codex search regression proof
+on:
+  push:
+    branches: [validate-codex-search]
+permissions:
+  contents: read
+jobs:
+  regression-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ad2d5a03ca5d7af18b697fe5eac40146404d26e6
+          fetch-depth: 2
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - name: Check formatting
+        run: test -z "$(gofmt -l internal/runtime/provider_codex.go internal/runtime/provider_test.go internal/runtime/provider_gateway_integration_test.go)"
+      - run: bash scripts/build-chatbot.sh
+      - name: Install the Codex version from the bug report
+        run: npm install --global @openai/codex@0.172.0
+      - name: Prove the regression fails on unchanged production code
+        shell: bash
+        run: |
+          cp internal/runtime/provider_codex.go /tmp/provider_codex.fixed.go
+          git show 2ad5659be8844fe4a4dfd12253b3584d9e4f1d14:internal/runtime/provider_codex.go > internal/runtime/provider_codex.go
+          set +e
+          go test ./internal/runtime -run '^TestCodexRunDisablesBuiltinWebSearch$' -count=1 -v > /tmp/red-unit.log 2>&1
+          unit_status=$?
+          AGENTFLOW_TEST_NATIVE_PROVIDERS=1 go test ./internal/runtime -run '^TestNativeProviderCustomGateway$/^codex$' -count=1 -v > /tmp/red-wire.log 2>&1
+          wire_status=$?
+          set -e
+          cp /tmp/provider_codex.fixed.go internal/runtime/provider_codex.go
+          cat /tmp/red-unit.log /tmp/red-wire.log
+          test "$unit_status" -ne 0
+          test "$wire_status" -ne 0
+          grep -q 'effective web search config' /tmp/red-unit.log
+          grep -q 'web_search' /tmp/red-wire.log
+      - name: Prove the fixed command and real CLI request pass
+        run: |
+          go test ./internal/runtime -run '^TestCodexRunDisablesBuiltinWebSearch$' -count=1 -v | tee /tmp/green-unit.log
+          AGENTFLOW_TEST_NATIVE_PROVIDERS=1 go test ./internal/runtime -run '^TestNativeProviderCustomGateway$/^codex$' -count=1 -v | tee /tmp/green-wire.log
+          git diff --exit-code
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: codex-search-red-green-proof
+          path: /tmp/*-*.log
+          if-no-files-found: ignore
