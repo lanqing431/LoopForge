@@ -1,8 +1,8 @@
-name: platform
+name: Stage untracked 1475 full platform validation
 on:
-  pull_request:
   push:
-    branches: [main, master]
+    branches:
+      - validate/stage-untracked-1475
 permissions:
   contents: read
 jobs:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      REAL_BROWSER_TESTS: '^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium|TestBrowserScrollEndsOnASharpFrame)$'
+      REAL_BROWSER_TESTS: ^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium|TestBrowserScrollEndsOnASharpFrame)$
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v6
@@ -18,48 +18,58 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: '22'
+          node-version: "22"
       - run: python3 scripts/test-install.py -v
       - name: Build and test the chatbot frontend embedded by the platform binary
         run: bash scripts/build-chatbot.sh
       - name: Let Chromium use its sandbox as an unprivileged user
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      # Engine and API tests run LOOP nodes in the shared test-native sandbox,
-      # which is bwrap on Linux.
       - name: Install bubblewrap for the native sandbox
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      - name: Warm up Chromium so the first real-browser test does not pay the cold start
-        run: |
-          for name in chromium chromium-browser google-chrome-stable google-chrome; do
+      - name: Warm up Chromium so the first real-browser test does not pay the cold
+          start
+        run: >
+          for name in chromium chromium-browser google-chrome-stable
+          google-chrome; do
             bin=$(command -v "$name") && break
           done
+
           echo "Chromium: $bin"
+
           time timeout 120 "$bin" --headless=new --no-first-run --disable-gpu \
             --user-data-dir="$RUNNER_TEMP/chromium-warmup" --dump-dom about:blank >/dev/null
-      # Real-Chromium tests run on their own: alongside the rest of the suite
-      # the browser can miss its DevTools liveness check on a loaded runner.
-      # Collect both isolated runs with identical instrumentation, then gate
-      # their union without rerunning the suite or counting a statement twice.
       - name: Non-browser Go tests
-        run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS" -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp }}/go.cover"
+        run: go test -p=2 ./... -count=1 -timeout=600s -skip "$REAL_BROWSER_TESTS"
+          -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{
+          runner.temp }}/go.cover"
       - name: Real-browser Go tests
-        run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v -covermode=set -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp }}/go-browser.cover"
+        run: go test -p=1 ./internal/httpapi ./internal/runner ./internal/runtime
+          -count=1 -timeout=300s -run "$REAL_BROWSER_TESTS" -v -covermode=set
+          -coverpkg=agentflow/internal/... -coverprofile="${{ runner.temp
+          }}/go-browser.cover"
       - name: Coverage gate regression tests
         run: python3 scripts/test-coverage-go.py -v
       - name: Go statement coverage gate
-        run: |
+        run: >
           min=$(tr -d '[:space:]' < scripts/coverage-go.min)
+
           test -n "$min"
-          bash scripts/coverage-go.sh --profile "${{ runner.temp }}/go.cover" --profile "${{ runner.temp }}/go-browser.cover" --min "$min"
+
+          bash scripts/coverage-go.sh --profile "${{ runner.temp }}/go.cover"
+          --profile "${{ runner.temp }}/go-browser.cover" --min "$min"
       - name: Browser-free UI tests for the platform console
         run: npm ci --no-audit --no-fund && npm run coverage
         working-directory: webtest
       - name: Install pinned CLIs for local protocol acceptance
-        run: npm install --global @openai/codex@0.162.1 @anthropic-ai/claude-code@2.1.300
-      - name: Check real CLI credentials, MCP, stream parsing and native-tool restrictions
+        run: npm install --global @openai/codex@0.162.1
+          @anthropic-ai/claude-code@2.1.300
+      - name: Check real CLI credentials, MCP, stream parsing and native-tool
+          restrictions
         env:
-          AGENTFLOW_TEST_NATIVE_PROVIDERS: '1'
-        run: go test -p=2 ./internal/httpapi ./internal/runtime -run 'TestAssistantNativeProviderGateway|TestNativeProviderCustomGateway|TestFeatureModelsWithoutCodeBuddy' -count=1 -v
+          AGENTFLOW_TEST_NATIVE_PROVIDERS: "1"
+        run: go test -p=2 ./internal/httpapi ./internal/runtime -run
+          'TestAssistantNativeProviderGateway|TestNativeProviderCustomGateway|TestFeatureModelsWithoutCodeBuddy'
+          -count=1 -v
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - run: python3 scripts/collect-go-notices.py
@@ -74,7 +84,7 @@ jobs:
     timeout-minutes: 30
     env:
       AGENTFLOW_E2E_TOKEN_FILE: ${{ github.workspace }}/e2e/.auth/api-token
-      AGENTFLOW_E2E_DOCKER: '1'
+      AGENTFLOW_E2E_DOCKER: "1"
       LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
       LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
     steps:
@@ -84,23 +94,22 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: '22'
+          node-version: "22"
       - run: npm ci
         working-directory: e2e
       - run: npm audit --audit-level=high
         working-directory: e2e
       - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
-      # The e2e LOOPs and the runner the suite starts use the native e2e sandbox,
-      # which is bwrap on Linux.
       - name: Let bubblewrap create user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Install bubblewrap for the native sandbox
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      # The release checks run before the new platform image is published.
       - name: Prepare the platform image for the generic-docker sandbox
-        run: |
-          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
+        run: >
+          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p'
+          compose.yaml)
+
           if docker manifest inspect "$pinned" > /dev/null 2>&1; then
             docker pull --quiet "$pinned"
             sandbox_image="$pinned"
@@ -108,6 +117,7 @@ jobs:
             sandbox_image="loopforge-browser-ci:$GITHUB_SHA"
             docker build --build-arg LOOPFORGE_COMMIT="$GITHUB_SHA" -t "$sandbox_image" .
           fi
+
           echo "AGENTFLOW_ISOLATED_IMAGE=$sandbox_image" >> "$GITHUB_ENV"
       - name: Start clean local installation
         run: |
@@ -138,10 +148,6 @@ jobs:
           if(!project.members?.some(member=>member.userId===user.id))throw new Error('Acceptance account did not join the welcome project');
           JS
       - run: node e2e/setup-auth.mjs
-      # Mirror e2e/local.sh: a disposable bare remote enables the
-      # repository-bound API tests (repoSkip), and the ordinary member's token
-      # enables the second-user cases (tokenBSkip). The API runs on this host,
-      # so it can clone the local path.
       - name: Provision disposable repository and second-user token
         run: |
           repo="$RUNNER_TEMP/e2e-repo"
@@ -178,12 +184,12 @@ jobs:
           LOOPFORGE_UNCONFIGURED_USER: e2e-no-key
           LOOPFORGE_UNCONFIGURED_PASSWORD_FILE: ${{ github.workspace }}/.local/no-key-password
         working-directory: e2e
-      # Separate steps so a failing suite stays failed: these are skipped
-      # unless every suite above succeeded, and a low hit rate fails the job.
       - name: Export registered HTTP routes
-        run: AGENTFLOW_ROUTES_OUT="${{ runner.temp }}/routes.json" go test ./internal/httpapi -run '^TestRouteInventoryExport$' -count=1
+        run: AGENTFLOW_ROUTES_OUT="${{ runner.temp }}/routes.json" go test
+          ./internal/httpapi -run '^TestRouteInventoryExport$' -count=1
       - name: Require registered routes to be hit at least 85%
-        run: node e2e/coverage/route-coverage.mjs --routes "${{ runner.temp }}/routes.json" --log /tmp/loopforge.log --min 85
+        run: node e2e/coverage/route-coverage.mjs --routes "${{ runner.temp
+          }}/routes.json" --log /tmp/loopforge.log --min 85
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -191,11 +197,6 @@ jobs:
           path: e2e/test-results/
           if-no-files-found: ignore
   first-run:
-    # The path a new user takes: one-command install, then accounts created in the browser.
-    # Pulls the GHCR release pinned in compose.yaml; release.yml smoke-tests each newly published image.
-    # A pin bumped ahead of its tag has no image yet, so that commit is checked from source.
-    # So is a commit whose schema scripts differ from the pinned tag: the installer applies
-    # this checkout's scripts, which the released image may not be able to read.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -206,20 +207,27 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: '22'
+          node-version: "22"
       - run: npm ci
         working-directory: e2e
       - run: bash ../scripts/install-playwright-deps.sh npx playwright
         working-directory: e2e
-      - name: Install the pinned release, or build this checkout when the release cannot run it
-        run: |
-          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p' compose.yaml)
+      - name: Install the pinned release, or build this checkout when the release cannot
+          run it
+        run: >
+          pinned=$(sed -n 's/^ *image: \${LOOPFORGE_IMAGE:-\(.*\)}$/\1/p'
+          compose.yaml)
+
           tag="v${pinned##*:}"
-          schema=(migrations scripts/install-schema-extensions.sh scripts/install-observability-schema.sh)
+
+          schema=(migrations scripts/install-schema-extensions.sh
+          scripts/install-observability-schema.sh)
+
           if ! docker manifest inspect "$pinned" > /dev/null 2>&1; then
             echo "::notice::$pinned is not published yet; building this checkout"
             ./start.sh dev
-          elif ! git fetch --quiet --depth=1 origin "refs/tags/$tag:refs/tags/$tag"; then
+          elif ! git fetch --quiet --depth=1 origin
+          "refs/tags/$tag:refs/tags/$tag"; then
             echo "::warning::could not fetch $tag to compare schema scripts; installing $pinned"
             ./start.sh -d
           elif ! git diff --quiet "$tag" -- "${schema[@]}"; then
@@ -229,14 +237,16 @@ jobs:
             ./start.sh -d
           fi
       - name: Generate test passwords
-        run: |
+        run: >
           mkdir -p .local
+
           python3 -c 'import pathlib,secrets
+
           for n in ("admin-password","no-key-password"):
               p=pathlib.Path(".local")/n; p.write_text(secrets.token_urlsafe(20)); p.chmod(0o600)'
       - run: npx playwright test --config public/playwright.config.mjs 00-first-run
         env:
-          LOOPFORGE_FRESH_INSTALL: '1'
+          LOOPFORGE_FRESH_INSTALL: "1"
         working-directory: e2e
       - run: npx playwright test --config public/playwright.config.mjs
         working-directory: e2e
@@ -249,17 +259,68 @@ jobs:
           path: e2e/test-results/
           if-no-files-found: ignore
   platform-required:
-    # Stable check name for branch protection. An admin marks this required
-    # in GitHub; the workflow does not change repository settings.
     name: platform-required
     if: always()
-    needs: [core, browser, first-run]
+    needs:
+      - core
+      - browser
+      - first-run
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform job to pass
         working-directory: ${{ runner.temp }}
-        run: |
-          if [[ "${{ needs.core.result }}" != "success" || "${{ needs.browser.result }}" != "success" || "${{ needs.first-run.result }}" != "success" ]]; then
+        run: >
+          if [[ "${{ needs.core.result }}" != "success" || "${{
+          needs.browser.result }}" != "success" || "${{ needs.first-run.result
+          }}" != "success" ]]; then
             echo "core=${{ needs.core.result }} browser=${{ needs.browser.result }} first-run=${{ needs.first-run.result }}" >&2
             exit 1
           fi
+  stage-untracked-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Original source fails the regression; patched source passes
+        run: >-
+          set -euo pipefail
+
+          cp internal/gitwork/exclude.go "$RUNNER_TEMP/exclude-fixed.go"
+
+          trap 'cp "$RUNNER_TEMP/exclude-fixed.go" internal/gitwork/exclude.go'
+          EXIT
+
+          git show
+          be6918d7c0576e182d41daa808e140f1e529d7d9:internal/gitwork/exclude.go >
+          internal/gitwork/exclude.go
+
+          set +e
+
+          go test ./internal/gitwork -run '^TestGitIdentityAndStageUntracked$'
+          -count=1 -v > "$RUNNER_TEMP/baseline.log" 2>&1
+
+          status=$?
+
+          set -e
+
+          cat "$RUNNER_TEMP/baseline.log"
+
+          test "$status" -ne 0
+
+          grep -q 'did not match any files' "$RUNNER_TEMP/baseline.log"
+
+          cp "$RUNNER_TEMP/exclude-fixed.go" internal/gitwork/exclude.go
+
+          go test ./internal/gitwork -run '^TestGitIdentityAndStageUntracked$'
+          -count=1 -v | tee "$RUNNER_TEMP/fixed.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: stage-untracked-regression
+          path: ${{ runner.temp }}/*.log
+          if-no-files-found: error
