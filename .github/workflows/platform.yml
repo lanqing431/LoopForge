@@ -8,7 +8,7 @@ permissions:
 jobs:
   core:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       REAL_BROWSER_TESTS: '^(TestMainBotBrowserStartsAndDrivesRunBrowser|TestBrowserStreamPushesFramesAndRunsCommands|TestRunnerStartsPanelBrowserInRunSandbox|TestBrowserAgentOperationsDriveRealChromium|TestBrowserScrollEndsOnASharpFrame)$'
     steps:
