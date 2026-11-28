@@ -1,0 +1,52 @@
+name: SOP helper regression proof
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ebc46a580375c53a4fd52dfee231150d4bda7e07
+          fetch-depth: 2
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+      - run: bash scripts/build-chatbot.sh
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Prove the new regressions fail against the original implementation
+        run: |
+          git show fd039e51a36645886e1e8fca034055723d5bd664:internal/httpapi/assistant_sop_sandbox.go > internal/httpapi/assistant_sop_sandbox.go
+          set +e
+          go test ./internal/httpapi -run '^(TestSOPHelperResolvesBuiltInExecutorCredentials|TestAutomaticSOPSandboxUsesEachProjectsToolchain)$' -count=1 -timeout=180s -json > /tmp/sop-red.json
+          result=$?
+          set -e
+          cat /tmp/sop-red.json
+          test "$result" -ne 0
+          python3 - <<'PY'
+          import json
+          events = [json.loads(line) for line in open('/tmp/sop-red.json')]
+          failures = {e.get('Test') for e in events if e.get('Action') == 'fail' and e.get('Test')}
+          expected = {'TestSOPHelperResolvesBuiltInExecutorCredentials/claude-id', 'TestSOPHelperResolvesBuiltInExecutorCredentials', 'TestAutomaticSOPSandboxUsesEachProjectsToolchain/claude', 'TestAutomaticSOPSandboxUsesEachProjectsToolchain'}
+          assert failures == expected, failures
+          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
+          assert 'TestSOPHelperResolvesBuiltInExecutorCredentials/claude-kind' in passed
+          assert 'TestAutomaticSOPSandboxUsesEachProjectsToolchain/codebuddy' in passed
+          PY
+      - name: Verify the exact fixed implementation passes the same regressions
+        run: |
+          git show ebc46a580375c53a4fd52dfee231150d4bda7e07:internal/httpapi/assistant_sop_sandbox.go > internal/httpapi/assistant_sop_sandbox.go
+          git diff --exit-code
+          go test ./internal/httpapi -run '^(TestSOPHelperResolvesBuiltInExecutorCredentials|TestAutomaticSOPSandboxUsesEachProjectsToolchain)$' -count=1 -timeout=180s -v
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sop-red-proof
+          path: /tmp/sop-red.json
