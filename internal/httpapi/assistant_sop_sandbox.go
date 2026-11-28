@@ -41,6 +41,9 @@ func (h *assistantHandlers) runSOPHelper(ctx context.Context, execution domain.T
 		return "", errSOPHelperCredentials
 	}
 	executor, model := defaults.Executor, defaults.Model
+	if definition, ok := repo.BuiltInExecutor(executor); ok {
+		executor = definition.Kind
+	}
 	if executor == assistantEngineCodeBuddy && user.CodeBuddyAPIKey == "" {
 		if shared, ok := h.repo.SharedCodeBuddyKey(); ok && shared.SponsorID != user.ID {
 			var allowed bool

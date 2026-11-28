@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,14 +16,63 @@ import (
 	"agentflow/internal/tracker"
 )
 
+func TestSOPHelperResolvesBuiltInExecutorCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		executor    string
+		credentials repo.UserCredentialUpdate
+		wantPrompt  bool
+	}{
+		{"codebuddy", "codebuddy", repo.UserCredentialUpdate{CodeBuddyAPIKey: "selector-test-key"}, true},
+		{"codex", "codex", repo.UserCredentialUpdate{CodexAPIKey: "selector-test-key"}, true},
+		{"claude-id", "claude", repo.UserCredentialUpdate{ClaudeCodeAPIKey: "selector-test-key"}, true},
+		{"claude-kind", "claude-code", repo.UserCredentialUpdate{ClaudeCodeAPIKey: "selector-test-key"}, true},
+		{"missing-key", "claude", repo.UserCredentialUpdate{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := repo.OpenTest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(store.Close)
+			if _, err := store.UpdateUserCredentials(1, tc.credentials); err != nil {
+				t.Fatal(err)
+			}
+			h := &assistantHandlers{deps: &deps{repo: store}}
+			promptCalled := false
+			_, err = h.runSOPHelper(context.Background(), domain.TelemetryContext{ResponsibleUserID: 1}, domain.AssistantDefaults{Executor: tc.executor}, "", func(user domain.User) string {
+				promptCalled = true
+				// An empty prompt stops before launching a CLI, after the real
+				// credential and runner checks have accepted the selected user.
+				return ""
+			})
+			if promptCalled != tc.wantPrompt || errors.Is(err, errSOPHelperCredentials) == tc.wantPrompt {
+				t.Fatalf("executor %q: prompt called = %v, error = %v", tc.executor, promptCalled, err)
+			}
+		})
+	}
+}
+
 func TestAutomaticSOPSandboxUsesEachProjectsToolchain(t *testing.T) {
+	for _, executor := range []string{"codebuddy", "claude"} {
+		t.Run(executor, func(t *testing.T) {
+			testAutomaticSOPSandboxUsesEachProjectsToolchain(t, executor)
+		})
+	}
+}
+
+func testAutomaticSOPSandboxUsesEachProjectsToolchain(t *testing.T, executor string) {
 	store, err := repo.OpenTest()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
 	const key = "selector-test-model-key"
-	if _, err := store.UpdateUserCredentials(1, repo.UserCredentialUpdate{CodeBuddyAPIKey: key}); err != nil {
+	credentials := repo.UserCredentialUpdate{CodeBuddyAPIKey: key}
+	if executor == "claude" {
+		credentials = repo.UserCredentialUpdate{ClaudeCodeAPIKey: key}
+	}
+	if _, err := store.UpdateUserCredentials(1, credentials); err != nil {
 		t.Fatal(err)
 	}
 	projects := []struct{ id, name, toolchain, image string }{
@@ -41,7 +92,7 @@ func TestAutomaticSOPSandboxUsesEachProjectsToolchain(t *testing.T) {
 		}
 	}
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "codebuddy")
+	bin := filepath.Join(dir, executor)
 	selector := `#!/bin/sh
 for arg in "$@"; do input=$arg; done
 if [ "$input" = -- ]; then input=$(cat); fi
@@ -57,7 +108,11 @@ printf '{"type":"result","result":"{\\"sandboxProfileId\\":\\"%s\\"}"}\n' "$id"
 	if err := os.WriteFile(bin, []byte(selector), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	if executor == "claude" {
+		t.Setenv("AGENTFLOW_CLAUDE_BIN", bin)
+	} else {
+		t.Setenv("AGENTFLOW_CODEBUDDY_BIN", bin)
+	}
 	e := engine.New(store, runtime.NewManager(filepath.Join(dir, "workspace")))
 	e.ConfigureExecution("api-only", "test", 30*time.Second, false)
 	api := New(store, e, tracker.NewService(), "", "")
